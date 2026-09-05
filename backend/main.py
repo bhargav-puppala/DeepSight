@@ -1,17 +1,47 @@
 from io import BytesIO
+import os
 from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from huggingface_hub import hf_hub_download
 from PIL import Image, UnidentifiedImageError
 from ultralytics import YOLO
 
 
-MODEL_PATH = Path(__file__).resolve().parent / "models" / "best.pt"
+BACKEND_DIR = Path(__file__).resolve().parent
+LOCAL_MODEL_PATH = BACKEND_DIR / "models" / "best.pt"
 
-if not MODEL_PATH.is_file():
-    raise FileNotFoundError(f"YOLO model not found: {MODEL_PATH}")
+
+def resolve_model_path():
+    if LOCAL_MODEL_PATH.is_file():
+        return LOCAL_MODEL_PATH
+
+    repository = os.getenv("HF_MODEL_REPO")
+    filename = os.getenv("HF_MODEL_FILENAME", "best.pt")
+    if not repository:
+        raise FileNotFoundError(
+            f"YOLO model not found at {LOCAL_MODEL_PATH}. "
+            "Set HF_MODEL_REPO and optionally HF_MODEL_FILENAME for production."
+        )
+
+    try:
+        return Path(
+            hf_hub_download(
+                repo_id=repository,
+                filename=filename,
+                token=os.getenv("HF_TOKEN") or None,
+            )
+        )
+    except Exception as error:
+        raise RuntimeError(
+            f"Could not download YOLO model '{filename}' from '{repository}': {error}"
+        ) from error
+
+
+MODEL_PATH = resolve_model_path()
+
 
 try:
     model = YOLO(MODEL_PATH)
@@ -20,13 +50,17 @@ except Exception as error:
 
 app = FastAPI(title="DeepSight API")
 
+configured_origins = os.getenv("FRONTEND_ORIGIN")
+allowed_origins = (
+    [origin.strip() for origin in configured_origins.split(",") if origin.strip()]
+    if configured_origins
+    else ["http://localhost:5173", "http://127.0.0.1:5173"]
+)
+
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -1,5 +1,7 @@
 import { useRef, useState } from "react";
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+
 function App() {
   const fileInputRef = useRef(null);
 
@@ -56,7 +58,7 @@ function App() {
 
     try {
       const requestStartedAt = performance.now();
-      const response = await fetch("http://127.0.0.1:8000/detect", {
+      const response = await fetch(`${API_BASE_URL}/detect`, {
         method: "POST",
         body: formData,
       });
