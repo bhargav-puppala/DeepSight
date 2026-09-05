@@ -1,6 +1,9 @@
 from io import BytesIO
 import os
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException

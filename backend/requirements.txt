@@ -5,3 +5,4 @@ pillow
 numpy
 ultralytics
 huggingface_hub
+python-dotenv
