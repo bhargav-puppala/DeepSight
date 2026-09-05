@@ -14,6 +14,12 @@ function App() {
   const [analysisStatus, setAnalysisStatus] = useState("idle");
   const [results, setResults] = useState(null);
   const [error, setError] = useState("");
+  const [analysisStats, setAnalysisStats] = useState({
+    imagesAnalyzed: 0,
+    anomaliesDetected: 0,
+    highConfidence: "—",
+    processingTime: "—",
+  });
 
   const handleFile = (selectedFile) => {
     if (!selectedFile) return;
@@ -34,14 +40,22 @@ function App() {
     setAnalysisStatus("waiting");
     setError("");
     setResults(null);
+    setAnalysisStats({
+      imagesAnalyzed: 0,
+      anomaliesDetected: 0,
+      highConfidence: "—",
+      processingTime: "—",
+    });
 
     const formData = new FormData();
 
     formData.append("image", file);
     formData.append("latitude", latitude);
     formData.append("longitude", longitude);
+    formData.append("confidence_threshold", String(confidenceThreshold / 100));
 
     try {
+      const requestStartedAt = performance.now();
       const response = await fetch("http://127.0.0.1:8000/detect", {
         method: "POST",
         body: formData,
@@ -52,10 +66,22 @@ function App() {
       }
 
       const data = await response.json();
+      const detections = Array.isArray(data.detections) ? data.detections : [];
+      const highestConfidence = detections.reduce(
+        (highest, detection) => Math.max(highest, formatConfidence(detection.confidence)),
+        0
+      );
+      const processingTime = ((performance.now() - requestStartedAt) / 1000).toFixed(2);
 
       console.log("Backend response:", data);
 
       setResults(data);
+      setAnalysisStats({
+        imagesAnalyzed: 1,
+        anomaliesDetected: detections.length,
+        highConfidence: detections.length ? `${highestConfidence.toFixed(1)}%` : "—",
+        processingTime: `${processingTime}s`,
+      });
       setAnalysisStatus("complete");
 
     } catch (error) {
@@ -298,26 +324,26 @@ function App() {
 
               <StatCard
                 label="Images Analyzed"
-                value="0"
+                value={analysisStats.imagesAnalyzed}
                 description="This session"
               />
 
               <StatCard
                 label="Anomalies Detected"
-                value="0"
-                description="Awaiting analysis"
+                value={analysisStats.anomaliesDetected}
+                description="Current analysis"
               />
 
               <StatCard
                 label="High Confidence"
-                value="—"
-                description="No results yet"
+                value={analysisStats.highConfidence}
+                description="Highest detection"
               />
 
               <StatCard
                 label="Processing Time"
-                value="—"
-                description="Awaiting analysis"
+                value={analysisStats.processingTime}
+                description="Current analysis"
               />
 
             </div>
@@ -612,10 +638,6 @@ function App() {
                   AI detection will identify potential artificial anomalies
                   and assign confidence scores.
                 </p>
-                <p className="text-center text-xs leading-5 text-slate-400">
-  AI detection will identify potential artificial anomalies
-  and assign confidence scores.
-</p>
 
 
               </div>
@@ -1059,9 +1081,12 @@ function DetectionCard({ detection, latitude, longitude, onViewMap }) {
 
 
 function getBoundingBox(bbox) {
-  if (!Array.isArray(bbox) || bbox.length < 4) return null;
+  const values = Array.isArray(bbox)
+    ? bbox
+    : bbox && [bbox.x1, bbox.y1, bbox.x2, bbox.y2];
+  if (!values || values.length < 4) return null;
 
-  const [x1, y1, x2, y2] = bbox.map(Number);
+  const [x1, y1, x2, y2] = values.map(Number);
   if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
 
   return {
