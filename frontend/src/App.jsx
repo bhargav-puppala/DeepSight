@@ -964,11 +964,12 @@ function DetectionOverlay({ imageUrl, detections }) {
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
 
   return (
-    <div className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-950">
+    <div className="flex justify-center">
+      <div className="relative w-fit max-w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-950">
       <img
         src={imageUrl}
         alt="Annotated sonar detections"
-        className="block h-auto w-full"
+        className="block max-h-[400px] max-w-full w-auto object-contain"
         onLoad={(event) => {
           setImageSize({
             width: event.currentTarget.naturalWidth,
@@ -977,9 +978,9 @@ function DetectionOverlay({ imageUrl, detections }) {
         }}
       />
 
-      {imageSize.width > 0 && imageSize.height > 0 && (
-        <svg
-          className="pointer-events-none absolute inset-0 h-full w-full"
+        {imageSize.width > 0 && imageSize.height > 0 && (
+          <svg
+            className="pointer-events-none absolute inset-0 h-full w-full"
           viewBox={`0 0 ${imageSize.width} ${imageSize.height}`}
           preserveAspectRatio="none"
           role="img"
@@ -1025,8 +1026,9 @@ function DetectionOverlay({ imageUrl, detections }) {
               </g>
             );
           })}
-        </svg>
-      )}
+          </svg>
+        )}
+      </div>
     </div>
   );
 }
