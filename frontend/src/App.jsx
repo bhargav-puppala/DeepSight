@@ -627,107 +627,13 @@ function App() {
 
           {/* ================= RESULTS ================= */}
 
-          <section
-  id="results"
-  className="mt-7 rounded-2xl border border-slate-200 bg-white shadow-sm"
->
-
-  <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
-
-    <div>
-
-      <h3 className="font-semibold">
-        Detection results
-      </h3>
-
-      <p className="mt-1 text-xs text-slate-500">
-        AI-detected marine anomalies from the current analysis
-      </p>
-
-    </div>
-
-    <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">
-      {results?.detections?.length || 0} detections
-    </span>
-
-  </div>
-
-
-  <div className="p-6">
-
-    {results?.detections?.length > 0 ? (
-
-      <div className="space-y-3">
-
-        {results.detections.map((detection, index) => (
-
-          <div
-            key={index}
-            className="flex items-center justify-between rounded-xl border border-slate-200 p-4"
-          >
-
-            <div className="flex items-center gap-4">
-
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
-                <TargetIcon />
-              </div>
-
-              <div>
-
-                <p className="text-sm font-medium text-slate-800">
-                  {detection.class}
-                </p>
-
-                <p className="mt-1 text-xs text-slate-500">
-                  Confidence: {detection.confidence}%
-                </p>
-
-              </div>
-
-            </div>
-
-
-            <button
-              onClick={openMap}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
-            >
-              View on Map
-            </button>
-
-          </div>
-
-        ))}
-
-      </div>
-
-    ) : (
-
-      <div className="flex min-h-32 items-center justify-center p-8">
-
-        <div className="text-center">
-
-          <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-400">
-            <TargetIcon />
-          </div>
-
-          <p className="text-sm font-medium text-slate-600">
-            No detections yet
-          </p>
-
-          <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">
-            Detection results will appear here after the AI analysis
-            engine processes the sonar image.
-          </p>
-
-        </div>
-
-      </div>
-
-    )}
-
-  </div>
-
-</section>
+          <DetectionResults
+            imageUrl={preview}
+            results={results}
+            latitude={latitude}
+            longitude={longitude}
+            onViewMap={openMap}
+          />
 
 
           {/* ================= REPORTS ================= */}
@@ -957,6 +863,228 @@ function PipelineStep({ number, title, status, active }) {
 
     </div>
   );
+}
+
+
+function DetectionResults({ imageUrl, results, latitude, longitude, onViewMap }) {
+  const detections = Array.isArray(results?.detections) ? results.detections : [];
+  const detectionCount = detections.length;
+
+  return (
+    <section
+      id="results"
+      className="mt-7 rounded-2xl border border-slate-200 bg-white shadow-sm"
+    >
+      <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+        <div>
+          <h3 className="font-semibold">Detection results</h3>
+          <p className="mt-1 text-xs text-slate-500">
+            AI-detected marine anomalies from the current analysis
+          </p>
+        </div>
+
+        <span className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500">
+          {detectionCount} {detectionCount === 1 ? "detection" : "detections"}
+        </span>
+      </div>
+
+      <div className="p-6">
+        {detectionCount > 0 && imageUrl ? (
+          <>
+            <DetectionOverlay imageUrl={imageUrl} detections={detections} />
+
+            <div className="mt-6 grid gap-4 lg:grid-cols-2">
+              {detections.map((detection, index) => (
+                <DetectionCard
+                  key={`${detection.class || "detection"}-${index}`}
+                  detection={detection}
+                  latitude={latitude}
+                  longitude={longitude}
+                  onViewMap={onViewMap}
+                />
+              ))}
+            </div>
+          </>
+        ) : (
+          <div className="flex min-h-32 items-center justify-center p-8">
+            <div className="text-center">
+              <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-slate-100 text-slate-400">
+                <TargetIcon />
+              </div>
+              <p className="text-sm font-medium text-slate-600">
+                No detections yet
+              </p>
+              <p className="mt-1 max-w-sm text-xs leading-5 text-slate-400">
+                Detection results will appear here after the AI analysis
+                engine processes the sonar image.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+
+function DetectionOverlay({ imageUrl, detections }) {
+  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+
+  return (
+    <div className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-950">
+      <img
+        src={imageUrl}
+        alt="Annotated sonar detections"
+        className="block h-auto w-full"
+        onLoad={(event) => {
+          setImageSize({
+            width: event.currentTarget.naturalWidth,
+            height: event.currentTarget.naturalHeight,
+          });
+        }}
+      />
+
+      {imageSize.width > 0 && imageSize.height > 0 && (
+        <svg
+          className="pointer-events-none absolute inset-0 h-full w-full"
+          viewBox={`0 0 ${imageSize.width} ${imageSize.height}`}
+          preserveAspectRatio="none"
+          role="img"
+          aria-label="Sonar detection bounding boxes"
+        >
+          {detections.map((detection, index) => {
+            const box = getBoundingBox(detection.bbox);
+            if (!box) return null;
+
+            const confidence = formatConfidence(detection.confidence);
+            const label = `${detection.class || "Detection"} ${confidence}%`;
+            const labelWidth = Math.max(110, label.length * 8 + 18);
+            const labelY = Math.max(0, box.y - 28);
+
+            return (
+              <g key={`box-${index}`}>
+                <rect
+                  x={box.x}
+                  y={box.y}
+                  width={box.width}
+                  height={box.height}
+                  fill="none"
+                  stroke="#f87171"
+                  strokeWidth={Math.max(3, imageSize.width / 300)}
+                />
+                <rect
+                  x={box.x}
+                  y={labelY}
+                  width={labelWidth}
+                  height="28"
+                  fill="#b91c1c"
+                  rx="4"
+                />
+                <text
+                  x={box.x + 9}
+                  y={labelY + 19}
+                  fill="white"
+                  fontSize={Math.max(12, imageSize.width / 90)}
+                  fontWeight="600"
+                >
+                  {label}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      )}
+    </div>
+  );
+}
+
+
+function DetectionCard({ detection, latitude, longitude, onViewMap }) {
+  const confidence = formatConfidence(detection.confidence);
+  const confidenceLevel = getConfidenceLevel(confidence);
+  const box = getBoundingBox(detection.bbox);
+
+  return (
+    <article className="rounded-xl border border-slate-200 p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+            <TargetIcon />
+          </div>
+          <div>
+            <p className="text-sm font-medium capitalize text-slate-800">
+              {detection.class || "Unknown detection"}
+            </p>
+            <p className="mt-1 text-xs font-medium text-slate-500">
+              {confidence}% {confidenceLevel}
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={onViewMap}
+          className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50"
+        >
+          View on Map
+        </button>
+      </div>
+
+      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+        <div>
+          <dt className="text-slate-400">Confidence</dt>
+          <dd className="mt-1 font-medium text-slate-700">{confidence}%</dd>
+        </div>
+        <div>
+          <dt className="text-slate-400">Location</dt>
+          <dd className="mt-1 font-medium text-slate-700">
+            {latitude || "—"}, {longitude || "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-slate-400">Size</dt>
+          <dd className="mt-1 font-medium text-slate-700">
+            {box ? `${Math.round(box.width)} × ${Math.round(box.height)} px` : "—"}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-slate-400">Class</dt>
+          <dd className="mt-1 font-medium text-slate-700">
+            {detection.class || "—"}
+          </dd>
+        </div>
+      </dl>
+    </article>
+  );
+}
+
+
+function getBoundingBox(bbox) {
+  if (!Array.isArray(bbox) || bbox.length < 4) return null;
+
+  const [x1, y1, x2, y2] = bbox.map(Number);
+  if (![x1, y1, x2, y2].every(Number.isFinite)) return null;
+
+  return {
+    x: Math.min(x1, x2),
+    y: Math.min(y1, y2),
+    width: Math.abs(x2 - x1),
+    height: Math.abs(y2 - y1),
+  };
+}
+
+
+function formatConfidence(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return 0;
+
+  return Math.round((numericValue <= 1 ? numericValue * 100 : numericValue) * 10) / 10;
+}
+
+
+function getConfidenceLevel(confidence) {
+  if (confidence >= 80) return "HIGH";
+  if (confidence >= 50) return "MEDIUM";
+  return "LOW";
 }
 
 
