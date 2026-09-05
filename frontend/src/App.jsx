@@ -135,6 +135,8 @@ function App() {
 
   const locationReady = latitude !== "" && longitude !== "";
   const canAnalyze = file && locationReady;
+  const analysisComplete = analysisStatus === "complete";
+  const analysisInProgress = analysisStatus === "waiting";
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
@@ -591,24 +593,33 @@ function App() {
                       number="02"
                       title="Object detection"
                       status={
-                        analysisStatus === "waiting"
+                        analysisInProgress
                           ? "Processing"
-                          : "Waiting"
+                          : analysisComplete
+                            ? "Ready"
+                            : "Waiting"
                       }
-                      active={analysisStatus === "waiting"}
+                      active={analysisInProgress || analysisComplete}
                     />
 
                     <PipelineStep
                       number="03"
                       title="Confidence filtering"
-                      status="Waiting"
+                      status={analysisComplete ? "Ready" : "Waiting"}
+                      active={analysisComplete}
                     />
 
                     <PipelineStep
                       number="04"
                       title="Location & reporting"
-                      status={locationReady ? "Ready" : "Waiting"}
-                      active={locationReady}
+                      status={
+                        analysisInProgress
+                          ? "Waiting"
+                          : locationReady
+                            ? "Ready"
+                            : "Waiting"
+                      }
+                      active={!analysisInProgress && locationReady}
                     />
 
                   </div>
