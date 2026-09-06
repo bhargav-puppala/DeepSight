@@ -385,11 +385,8 @@ Potential future work, not current functionality:
 - Optimize the model for edge or autonomous underwater vehicle deployment.
 - Apply model quantization or other inference optimizations.
 
-## 20. License
 
-No project `LICENSE` file was found in the current working tree. The project license is therefore not currently documented. Third-party dependencies, including FastAPI, React, Tailwind CSS, Ultralytics, PyTorch-related packages, Pillow, NumPy, and Hugging Face Hub, retain their own licenses and terms.
-
-## 21. Acknowledgements
+## 20. Acknowledgements
 
 The implementation uses the following verified software resources:
 
@@ -401,5 +398,3 @@ The implementation uses the following verified software resources:
 - Pillow and NumPy for image decoding and array preparation.
 - `huggingface_hub` for optional startup-time model retrieval.
 - Google Maps links for the existing coordinate-viewing action.
-
-No external dataset or training resource is identified in the repository documentation.
