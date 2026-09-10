@@ -1,6 +1,6 @@
 # DeepSight
 
-DeepSight is a React and FastAPI prototype for detecting man-made underwater anomalies in side-scan sonar imagery. It accepts a sonar image and geographic coordinates, runs Ultralytics YOLO inference, and presents the detections with confidence values, original-image bounding boxes, location details, and an exportable JSON report.
+DeepSight is a React and FastAPI prototype for detecting man-made underwater anomalies in side-scan sonar imagery. It accepts a sonar image and an associated survey metadata CSV, runs Ultralytics YOLO inference, and presents the detections with confidence values, original-image bounding boxes, metadata-associated location details, and an exportable JSON report.
 
 > Project context: SIH26057, AI-powered automated underwater marine debris and anomaly detection for the Ministry of Earth Sciences (MoES) and the National Institute of Ocean Technology (NIOT).
 
@@ -14,13 +14,13 @@ The repository does not currently document training metrics, dataset size, accur
 
 The current prototype combines:
 
-- A Vite-powered React dashboard for image upload, coordinates, confidence-threshold selection, results, statistics, and reports.
+- A Vite-powered React dashboard for image upload, sonar metadata CSV upload, confidence-threshold selection, results, statistics, and reports.
 - A FastAPI service that decodes uploaded images, runs a locally available or Hugging Face-hosted YOLO model, and returns structured detections.
 - A full-image SVG overlay that displays all returned bounding boxes without changing the original upload preview.
 
 ```mermaid
 flowchart LR
-    A[Sonar image upload] --> B[React/Vite dashboard]
+    A[Sonar image + metadata CSV] --> B[React/Vite dashboard]
     B -->|multipart POST /detect| C[FastAPI]
     C --> D[Pillow RGB decode]
     D --> E[NumPy image array]
@@ -35,14 +35,14 @@ flowchart LR
 Implemented in the current working tree:
 
 - Side-scan sonar image upload by file picker or drag and drop.
-- Latitude and longitude input with Google Maps links.
+- Sonar metadata CSV upload with image-name matching and Google Maps links for the associated survey location.
 - Configurable confidence threshold from 0% to 100%.
 - Real YOLO inference through `POST /detect`.
 - Dynamic detection count and dashboard statistics.
 - Full original sonar image with responsive SVG bounding-box overlays.
 - Class name, confidence, confidence level, location, and bounding-box dimensions for each detection.
 - Empty state when no detections are returned.
-- JSON report download containing the selected image, coordinates, threshold, and detections.
+- JSON report download containing the selected image, metadata source, associated survey coordinates, available ping metadata, threshold, and detections.
 - Startup-time local model loading with a Hugging Face fallback for deployments.
 - Configurable frontend API URL and backend CORS origins.
 - Human-readable frontend error state and backend validation errors.
@@ -68,7 +68,7 @@ sequenceDiagram
     participant API as FastAPI backend
     participant Model as YOLO model
 
-    User->>UI: Select image and enter coordinates
+    User->>UI: Select image and metadata CSV
     UI->>API: POST /detect multipart form
     API->>API: Decode image with Pillow and convert to RGB
     API->>Model: Predict with confidence threshold
@@ -80,8 +80,8 @@ sequenceDiagram
 ## 6. End-to-End Processing Pipeline
 
 1. The user selects or drops an image in the React dashboard.
-2. The user supplies latitude and longitude and chooses a confidence threshold.
-3. React sends `image`, `latitude`, `longitude`, and `confidence_threshold` as multipart form data.
+2. The user selects a metadata CSV and chooses a confidence threshold.
+3. React sends `image`, `metadata_file`, and `confidence_threshold` as multipart form data.
 4. FastAPI validates that the threshold is between `0` and `1`.
 5. Pillow opens the uploaded file and converts it to RGB.
 6. NumPy converts the RGB image to an array for inference.
@@ -120,12 +120,12 @@ The frontend is a React application built with Vite. Tailwind CSS is provided th
 `frontend/src/App.jsx` manages:
 
 - Upload preview and file state.
-- Coordinate and confidence-threshold inputs.
+- Metadata CSV and confidence-threshold inputs.
 - API requests through `fetch` and `FormData`.
 - Loading, completion, and error states.
 - Dashboard statistics based on the latest successful response.
 - Detection Results rendering through reusable overlay and card components.
-- Google Maps links using the supplied latitude and longitude.
+- Google Maps links using the metadata-associated latitude and longitude.
 - JSON report generation in the browser.
 
 The main upload image remains unannotated. Bounding boxes are drawn only in the Detection Results section over the full image. The frontend API base URL is read from `VITE_API_BASE_URL`.
@@ -275,8 +275,7 @@ Request content type: `multipart/form-data`.
 | Field | Type | Required | Description |
 |---|---|---:|---|
 | `image` | file | Yes | Uploaded image readable by Pillow. |
-| `latitude` | number | Yes | Sonar capture latitude. |
-| `longitude` | number | Yes | Sonar capture longitude. |
+| `metadata_file` | CSV file | Yes | Survey metadata containing `image_name`, `latitude`, and `longitude`. |
 | `confidence_threshold` | number | No | Value from `0` to `1`; defaults to `0.5`. |
 
 Example request with safe example values:
@@ -284,8 +283,7 @@ Example request with safe example values:
 ```bash
 curl -X POST http://127.0.0.1:8000/detect \
   -F "image=@example-sonar.png" \
-  -F "latitude=17.1270" \
-  -F "longitude=83.6324" \
+  -F "metadata_file=@sonar_metadata.csv" \
   -F "confidence_threshold=0.50"
 ```
 
@@ -308,6 +306,11 @@ The response preserves original image dimensions and uses original-image pixel c
   "image_height": 576,
   "latitude": 17.127,
   "longitude": 83.6324,
+  "metadata": {
+    "latitude": 17.127,
+    "longitude": 83.6324,
+    "ping_id": "1001"
+  },
   "confidence_threshold": 0.5,
   "detections": [
     {
@@ -323,7 +326,12 @@ The response preserves original image dimensions and uses original-image pixel c
         "height": 180.0
       },
       "latitude": 17.127,
-      "longitude": 83.6324
+      "longitude": 83.6324,
+      "metadata": {
+        "latitude": 17.127,
+        "longitude": 83.6324,
+        "ping_id": "1001"
+      }
     }
   ]
 }
@@ -364,7 +372,7 @@ DeepSight integrates multi-class side-scan sonar detection, confidence-based fil
 
 ## 18. Limitations
 
-- The current prototype accepts latitude and longitude as user input; it does not parse sonar ping headers or derive coordinates from image pixels.
+- The current prototype reads associated coordinates from the uploaded CSV; it does not parse XTF/JSF sonar ping headers or derive exact object coordinates from image pixels.
 - Training dataset composition and diversity are not documented in the repository.
 - Cross-sonar-sensor and cross-environment generalization have not been established here.
 - The three available classes may not cover all marine debris or underwater anomalies.

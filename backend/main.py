@@ -1,4 +1,5 @@
 from io import BytesIO
+import csv
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -70,6 +71,71 @@ app.add_middleware(
 )
 
 
+REQUIRED_METADATA_COLUMNS = {"image_name", "latitude", "longitude"}
+OPTIONAL_METADATA_COLUMNS = (
+    "timestamp",
+    "heading",
+    "altitude",
+    "slant_range",
+    "ping_id",
+    "ping_number",
+)
+
+
+async def read_sonar_metadata(metadata_file: UploadFile, image_name: str):
+    if not metadata_file.filename or not metadata_file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Sonar metadata must be a CSV file")
+
+    try:
+        metadata_text = (await metadata_file.read()).decode("utf-8-sig")
+        reader = csv.DictReader(metadata_text.splitlines())
+        columns = {column.strip() for column in (reader.fieldnames or []) if column}
+    except (UnicodeDecodeError, csv.Error) as error:
+        raise HTTPException(status_code=400, detail="Sonar metadata CSV could not be parsed") from error
+
+    missing_columns = sorted(REQUIRED_METADATA_COLUMNS - columns)
+    if missing_columns:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Sonar metadata is missing required columns: {', '.join(missing_columns)}",
+        )
+
+    matching_row = None
+    for row in reader:
+        if (row.get("image_name") or "").strip() == image_name:
+            matching_row = {key: (value or "").strip() for key, value in row.items() if key}
+            break
+
+    if matching_row is None:
+        raise HTTPException(status_code=422, detail=f"No metadata entry found for {image_name}.")
+
+    try:
+        latitude = float(matching_row["latitude"])
+        longitude = float(matching_row["longitude"])
+    except (TypeError, ValueError) as error:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Metadata coordinates for {image_name} must be valid numbers",
+        ) from error
+
+    if not -90 <= latitude <= 90 or not -180 <= longitude <= 180:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Metadata coordinates for {image_name} are outside valid latitude/longitude ranges",
+        )
+
+    metadata = {"latitude": latitude, "longitude": longitude}
+    for column in OPTIONAL_METADATA_COLUMNS:
+        value = matching_row.get(column, "")
+        if value:
+            metadata[column] = value
+    if matching_row.get("ping_id"):
+        metadata["ping_id"] = matching_row["ping_id"]
+    if matching_row.get("ping_number"):
+        metadata["ping_number"] = matching_row["ping_number"]
+    return metadata
+
+
 @app.get("/")
 def root():
     return {
@@ -80,8 +146,9 @@ def root():
 @app.post("/detect")
 async def detect(
     image: UploadFile = File(...),
-    latitude: float = Form(...),
-    longitude: float = Form(...),
+    metadata_file: UploadFile | None = File(None),
+    latitude: float | None = Form(None),
+    longitude: float | None = Form(None),
     confidence_threshold: float = Form(0.5),
 ):
     if not 0 <= confidence_threshold <= 1:
@@ -91,6 +158,15 @@ async def detect(
         )
 
     image_bytes = await image.read()
+
+    if metadata_file is not None:
+        metadata = await read_sonar_metadata(metadata_file, image.filename or "")
+        latitude = metadata["latitude"]
+        longitude = metadata["longitude"]
+    elif latitude is not None and longitude is not None:
+        metadata = {"latitude": latitude, "longitude": longitude}
+    else:
+        raise HTTPException(status_code=422, detail="Sonar metadata CSV is required")
 
     try:
         original_image = Image.open(BytesIO(image_bytes)).convert("RGB")
@@ -134,6 +210,7 @@ async def detect(
                     },
                     "latitude": latitude,
                     "longitude": longitude,
+                    "metadata": metadata,
                 }
             )
 
@@ -144,6 +221,7 @@ async def detect(
         "image_height": image_height,
         "latitude": latitude,
         "longitude": longitude,
+        "metadata": metadata,
         "confidence_threshold": confidence_threshold,
         "detections": detections,
     }

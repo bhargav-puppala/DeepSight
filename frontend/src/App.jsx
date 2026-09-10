@@ -1,14 +1,15 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
 function App() {
   const fileInputRef = useRef(null);
+  const metadataInputRef = useRef(null);
 
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
-  const [latitude, setLatitude] = useState("");
-  const [longitude, setLongitude] = useState("");
+  const [metadataFile, setMetadataFile] = useState(null);
+  const [metadata, setMetadata] = useState(null);
 
   const [showSettings, setShowSettings] = useState(false);
   const [confidenceThreshold, setConfidenceThreshold] = useState(50);
@@ -23,12 +24,26 @@ function App() {
     processingTime: "—",
   });
 
+  const [showIntro, setShowIntro] = useState(() => {
+    try {
+      return sessionStorage.getItem("deepsight_intro_seen") !== "true";
+    } catch {
+      return true;
+    }
+  });
+
   const handleFile = (selectedFile) => {
     if (!selectedFile) return;
 
     setFile(selectedFile);
     setPreview(URL.createObjectURL(selectedFile));
-    setAnalysisStatus("ready");
+    const matchingMetadata = metadata?.rows.find((row) => row.image_name === selectedFile.name);
+    setError(
+      metadata && !matchingMetadata
+        ? `No metadata entry found for ${selectedFile.name}.`
+        : ""
+    );
+    setAnalysisStatus(metadata && !matchingMetadata ? "idle" : "ready");
   };
 
   const handleDrop = (e) => {
@@ -36,8 +51,47 @@ function App() {
     handleFile(e.dataTransfer.files[0]);
   };
 
+  const handleMetadataFile = async (selectedFile) => {
+    if (!selectedFile) return;
+
+    if (!selectedFile.name.toLowerCase().endsWith(".csv")) {
+      setError("Sonar metadata must be a CSV file.");
+      setMetadataFile(null);
+      setMetadata(null);
+      return;
+    }
+
+    try {
+      const parsedMetadata = parseMetadataCsv(await selectedFile.text());
+      const matchingMetadata = parsedMetadata.rows.find(
+        (row) => row.image_name === file?.name
+      );
+
+      setMetadataFile(selectedFile);
+      setMetadata(parsedMetadata);
+      setError(
+        file && !matchingMetadata
+          ? `No metadata entry found for ${file.name}.`
+          : ""
+      );
+      setAnalysisStatus(file && matchingMetadata ? "ready" : "idle");
+    } catch (validationError) {
+      setError(validationError.message);
+      setMetadataFile(null);
+      setMetadata(null);
+      setAnalysisStatus("idle");
+    }
+  };
+
   const handleAnalyze = async () => {
-    if (!file || !latitude || !longitude) return;
+    if (!file || !metadataFile || !metadata) return;
+
+    const matchingMetadata = metadata.rows.find((row) => row.image_name === file.name);
+    if (!matchingMetadata) {
+      setError(`No metadata entry found for ${file.name}.`);
+      setAnalysisStatus("error");
+      return;
+    }
 
     setAnalysisStatus("waiting");
     setError("");
@@ -52,8 +106,7 @@ function App() {
     const formData = new FormData();
 
     formData.append("image", file);
-    formData.append("latitude", latitude);
-    formData.append("longitude", longitude);
+    formData.append("metadata_file", metadataFile);
     formData.append("confidence_threshold", String(confidenceThreshold / 100));
 
     try {
@@ -64,7 +117,8 @@ function App() {
       });
 
       if (!response.ok) {
-        throw new Error("Backend request failed");
+        const errorBody = await response.json().catch(() => null);
+        throw new Error(errorBody?.detail || "Backend request failed");
       }
 
       const data = await response.json();
@@ -89,16 +143,16 @@ function App() {
     } catch (error) {
       console.error(error);
 
-      setError(
-        "Could not connect to the DeepSight analysis engine."
-      );
+      setError(error.message || "Could not connect to the DeepSight analysis engine.");
 
       setAnalysisStatus("error");
     }
   };  
 
   const openMap = () => {
-    if (!latitude || !longitude) return;
+    const latitude = results?.latitude ?? metadata?.rows.find((row) => row.image_name === file?.name)?.latitude;
+    const longitude = results?.longitude ?? metadata?.rows.find((row) => row.image_name === file?.name)?.longitude;
+    if (latitude == null || longitude == null) return;
 
     window.open(
       `https://www.google.com/maps?q=${latitude},${longitude}`,
@@ -109,8 +163,8 @@ function App() {
   const downloadJSON = () => {
     const report = {
       image: file?.name || null,
-      latitude: latitude || null,
-      longitude: longitude || null,
+      metadata_source: metadataFile?.name || null,
+      metadata: results?.metadata || null,
       confidence_threshold: confidenceThreshold,
       detections: results?.detections || [],
     };
@@ -135,13 +189,16 @@ function App() {
     });
   };
 
-  const locationReady = latitude !== "" && longitude !== "";
-  const canAnalyze = file && locationReady;
+  const matchingMetadata = metadata?.rows.find((row) => row.image_name === file?.name);
+  const locationReady = !!matchingMetadata;
+  const canAnalyze = file && metadataFile && locationReady;
   const analysisComplete = analysisStatus === "complete";
   const analysisInProgress = analysisStatus === "waiting";
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900">
+    <>
+      {showIntro && <IntroScreen onComplete={() => setShowIntro(false)} />}
+      <div className="min-h-screen bg-slate-100 text-slate-900">
 
       {/* ================= SIDEBAR ================= */}
 
@@ -309,8 +366,7 @@ function App() {
                 </h1>
 
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                  Upload a Side-Scan Sonar image and provide its geographic
-                  coordinates to detect potential marine anomalies.
+                      Upload a Side-Scan Sonar image and its survey metadata to detect potential marine anomalies.
                 </p>
 
               </div>
@@ -491,31 +547,31 @@ function App() {
                 </h3>
 
                 <p className="mt-1 text-xs text-slate-500">
-                  Configure the location for this sonar capture.
+                  Associate the sonar capture with survey metadata.
                 </p>
 
               </div>
 
               <div className="space-y-5 p-6">
 
-                {/* Location */}
+                {/* Sonar metadata */}
 
                 <div>
 
                   <div className="mb-4 flex items-center gap-3">
 
                     <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-slate-100">
-                      <LocationIcon />
+                        <LocationIcon />
                     </div>
 
                     <div>
 
                       <p className="text-sm font-medium">
-                        Geographic location
+                        Sonar metadata
                       </p>
 
                       <p className="text-xs text-slate-400">
-                        Coordinates of sonar capture
+                        Upload the coordinate CSV for this survey
                       </p>
 
                     </div>
@@ -523,43 +579,33 @@ function App() {
                   </div>
 
 
-                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+                  <input
+                    ref={metadataInputRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    className="hidden"
+                    onChange={(e) => handleMetadataFile(e.target.files[0])}
+                  />
 
-                    <div>
+                  <button
+                    type="button"
+                    onClick={() => metadataInputRef.current?.click()}
+                    className="w-full rounded-lg border border-slate-300 px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Choose metadata CSV
+                  </button>
 
-                      <label className="mb-2 block text-xs font-medium text-slate-600">
-                        Latitude
-                      </label>
+                  {metadataFile && (
+                    <p className="mt-3 truncate text-xs text-emerald-700">
+                      ✓ {metadataFile.name}
+                    </p>
+                  )}
 
-                      <input
-                        type="number"
-                        step="any"
-                        value={latitude}
-                        onChange={(e) => setLatitude(e.target.value)}
-                        placeholder="17.6868"
-                        className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-                      />
-
-                    </div>
-
-                    <div>
-
-                      <label className="mb-2 block text-xs font-medium text-slate-600">
-                        Longitude
-                      </label>
-
-                      <input
-                        type="number"
-                        step="any"
-                        value={longitude}
-                        onChange={(e) => setLongitude(e.target.value)}
-                        placeholder="83.2185"
-                        className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-2 focus:ring-slate-200"
-                      />
-
-                    </div>
-
-                  </div>
+                  {matchingMetadata && (
+                    <p className="mt-3 text-xs leading-5 text-slate-500">
+                      Associated survey location: {matchingMetadata.latitude}, {matchingMetadata.longitude}
+                    </p>
+                  )}
 
 
                   <button
@@ -613,11 +659,11 @@ function App() {
 
                     <PipelineStep
                       number="04"
-                      title="Location & reporting"
+                        title="Metadata & reporting"
                       status={
                         analysisInProgress
                           ? "Waiting"
-                          : locationReady
+                            : locationReady
                             ? "Ready"
                             : "Waiting"
                       }
@@ -665,8 +711,6 @@ function App() {
           <DetectionResults
             imageUrl={preview}
             results={results}
-            latitude={latitude}
-            longitude={longitude}
             onViewMap={openMap}
           />
 
@@ -705,7 +749,7 @@ function App() {
                   </p>
 
                   <p className="mt-1 text-xs text-slate-400">
-                    JSON report containing image, coordinates and detections
+                    JSON report with metadata-associated geographic information and detections
                   </p>
 
                 </div>
@@ -819,6 +863,114 @@ function App() {
 
       )}
 
+      </div>
+    </>
+  );
+}
+
+
+function parseMetadataCsv(csvText) {
+  const rows = parseCsvRows(csvText);
+  if (!rows.length) {
+    throw new Error("Sonar metadata CSV is empty.");
+  }
+
+  const requiredColumns = ["image_name", "latitude", "longitude"];
+  const missingColumns = requiredColumns.filter((column) => !(column in rows[0]));
+  if (missingColumns.length) {
+    throw new Error(`Metadata CSV is missing required columns: ${missingColumns.join(", ")}.`);
+  }
+
+  rows.forEach((row) => {
+    const latitude = Number(row.latitude);
+    const longitude = Number(row.longitude);
+    if (!row.image_name || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      throw new Error("Metadata CSV contains a row with an invalid image name or coordinate.");
+    }
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      throw new Error(`Coordinates for ${row.image_name} are outside valid ranges.`);
+    }
+    row.latitude = latitude;
+    row.longitude = longitude;
+  });
+
+  return { rows };
+}
+
+
+function parseCsvRows(csvText) {
+  const records = [];
+  let record = [];
+  let value = "";
+  let quoted = false;
+
+  for (let index = 0; index <= csvText.length; index += 1) {
+    const character = csvText[index];
+    if (character === '"') {
+      if (quoted && csvText[index + 1] === '"') {
+        value += '"';
+        index += 1;
+      } else {
+        quoted = !quoted;
+      }
+    } else if ((character === "," || character === "\n" || character === "\r" || character === undefined) && !quoted) {
+      if (character === "\r" && csvText[index + 1] === "\n") continue;
+      record.push(value.trim());
+      value = "";
+      if (character !== ",") {
+        if (record.some(Boolean)) records.push(record);
+        record = [];
+      }
+    } else {
+      value += character;
+    }
+  }
+
+  const [headers, ...data] = records;
+  if (!headers) return [];
+  return data.map((fields) =>
+    headers.reduce((row, header, index) => {
+      row[header] = fields[index] || "";
+      return row;
+    }, {})
+  );
+}
+
+
+function IntroScreen({ onComplete }) {
+  useEffect(() => {
+    const duration = window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      ? 900
+      : 3500;
+    const timer = window.setTimeout(() => {
+      sessionStorage.setItem("deepsight_intro_seen", "true");
+      onComplete();
+    }, duration);
+    return () => window.clearTimeout(timer);
+  }, [onComplete]);
+
+  const finishIntro = () => {
+    sessionStorage.setItem("deepsight_intro_seen", "true");
+    onComplete();
+  };
+
+  return (
+    <div className="intro-screen" role="dialog" aria-label="DeepSight introduction">
+      <div className="intro-atmosphere" />
+      <div className="sonar-ring sonar-ring-one" />
+      <div className="sonar-ring sonar-ring-two" />
+      <div className="ship-scene" aria-hidden="true">
+        <svg viewBox="0 0 520 220" className="intro-ship">
+          <path className="ship-fragment fragment-hull" d="M78 134h286l-28 31H112z" />
+          <path className="ship-fragment fragment-deck" d="M130 128l26-38h114l40 38z" />
+          <path className="ship-fragment fragment-stack" d="M211 90V55h24v35z" />
+          <path className="ship-fragment fragment-bridge" d="M170 90V67h54l22 23z" />
+          <path className="ship-fragment fragment-bow" d="M364 134h66l-38 31h-56z" />
+          <path className="ship-fragment fragment-wave" d="M44 171c74-18 148 12 224-2s134-10 208 3" />
+        </svg>
+      </div>
+      <div className="intro-brand">DEEPSIGHT <span>/ SONAR INTELLIGENCE</span></div>
+      <button type="button" className="intro-skip" onClick={finishIntro}>Skip intro</button>
     </div>
   );
 }
@@ -901,7 +1053,7 @@ function PipelineStep({ number, title, status, active }) {
 }
 
 
-function DetectionResults({ imageUrl, results, latitude, longitude, onViewMap }) {
+function DetectionResults({ imageUrl, results, onViewMap }) {
   const detections = Array.isArray(results?.detections) ? results.detections : [];
   const detectionCount = detections.length;
 
@@ -933,8 +1085,6 @@ function DetectionResults({ imageUrl, results, latitude, longitude, onViewMap })
                 <DetectionCard
                   key={`${detection.class || "detection"}-${index}`}
                   detection={detection}
-                  latitude={latitude}
-                  longitude={longitude}
                   onViewMap={onViewMap}
                 />
               ))}
@@ -1036,7 +1186,7 @@ function DetectionOverlay({ imageUrl, detections }) {
 }
 
 
-function DetectionCard({ detection, latitude, longitude, onViewMap }) {
+function DetectionCard({ detection, onViewMap }) {
   const confidence = formatConfidence(detection.confidence);
   const confidenceLevel = getConfidenceLevel(confidence);
   const box = getBoundingBox(detection.bbox);
@@ -1071,12 +1221,36 @@ function DetectionCard({ detection, latitude, longitude, onViewMap }) {
           <dt className="text-slate-400">Confidence</dt>
           <dd className="mt-1 font-medium text-slate-700">{confidence}%</dd>
         </div>
-        <div>
-          <dt className="text-slate-400">Location</dt>
+        <div className="col-span-2">
+          <dt className="text-slate-400">Associated Survey Location</dt>
           <dd className="mt-1 font-medium text-slate-700">
-            {latitude || "—"}, {longitude || "—"}
+            {detection.latitude ?? "—"}, {detection.longitude ?? "—"}
           </dd>
         </div>
+        {detection.metadata?.ping_id && (
+          <div>
+            <dt className="text-slate-400">Ping ID</dt>
+            <dd className="mt-1 font-medium text-slate-700">{detection.metadata.ping_id}</dd>
+          </div>
+        )}
+        {detection.metadata?.timestamp && (
+          <div>
+            <dt className="text-slate-400">Timestamp</dt>
+            <dd className="mt-1 font-medium text-slate-700">{detection.metadata.timestamp}</dd>
+          </div>
+        )}
+        {detection.metadata?.heading && (
+          <div>
+            <dt className="text-slate-400">Heading</dt>
+            <dd className="mt-1 font-medium text-slate-700">{detection.metadata.heading}</dd>
+          </div>
+        )}
+        {detection.metadata?.altitude && (
+          <div>
+            <dt className="text-slate-400">Altitude</dt>
+            <dd className="mt-1 font-medium text-slate-700">{detection.metadata.altitude}</dd>
+          </div>
+        )}
         <div>
           <dt className="text-slate-400">Size</dt>
           <dd className="mt-1 font-medium text-slate-700">
